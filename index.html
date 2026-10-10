@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Widescreen Split-Screen TTS Reader</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .selected-start {
+            background-color: #3b82f6;
+            color: white;
+            font-weight: bold;
+            border-radius: 4px;
+            padding: 0 3px;
+        }
+        .speaking-highlight {
+            background-color: #10b981;
+            color: white;
+            font-weight: bold;
+            border-radius: 4px;
+            padding: 0 3px;
+        }
+        .word-span {
+            cursor: pointer;
+            transition: background-color 0.1s;
+        }
+        .word-span:hover {
+            background-color: rgba(59, 130, 246, 0.3);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 h-screen overflow-hidden p-4 lg:p-6 flex flex-col items-center justify-center">
+    
+    <!-- Main Full-Width Container -->
+    <div class="w-full max-w-[95vw] h-full max-h-[92vh] grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+        
+        <!-- LEFT PANEL: Fixed Controls -->
+        <div class="lg:col-span-4 bg-slate-900 p-5 rounded-2xl shadow-xl border border-slate-800 flex flex-col justify-between h-full">
+            <div>
+                <div class="flex justify-between items-center mb-1">
+                    <h1 class="text-xl font-bold text-blue-400">TTS Control Panel</h1>
+                    <button id="restartFreshBtn" class="px-2 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-400 border border-rose-500/30 rounded-lg text-[11px] font-semibold transition" title="Clear all memory and start fresh">🔄 Restart Fresh</button>
+                </div>
+                <p class="text-xs text-slate-400 mb-3">Paste text below, configure settings, and control playback.</p>
+                
+                <!-- Quick Paste Box Area -->
+                <div class="mb-3">
+                    <label class="block text-xs font-medium mb-1 text-slate-300">Quick Paste Text Box:</label>
+                    <textarea id="textInput" rows="2" class="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-blue-500 text-xs resize-none" placeholder="Click here and paste your text..."></textarea>
+                    <button id="loadTextBtn" class="mt-1.5 w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-xl transition border border-slate-700 shadow-sm text-blue-300">Load Text into Viewer →</button>
+                </div>
+
+                <!-- Controls Stack -->
+                <div class="space-y-3 mb-3">
+                    <!-- Voice Selector -->
+                    <div>
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="block text-xs font-medium text-slate-300">Voice:</label>
+                            <button id="refreshBtn" class="text-xs text-blue-400 hover:underline">🔄 Refresh Voices</button>
+                        </div>
+                        <select id="voiceSelect" class="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-blue-500 text-xs"></select>
+                    </div>
+
+                    <!-- Speed Control -->
+                    <div>
+                        <label class="block text-xs font-medium mb-1 text-slate-300">Speed: <span id="rateVal">1.0</span>x</label>
+                        <input type="range" id="rate" min="0.5" max="2.0" step="0.1" value="1.0" class="w-full accent-blue-500 mt-1">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Section: Status & Action Buttons -->
+            <div>
+                <div id="status" class="text-[11px] text-slate-400 mb-2">Loaded 0 system voices.</div>
+                <div class="flex gap-2 mb-2">
+                    <button id="playBtn" class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 font-semibold rounded-xl transition text-xs shadow-lg shadow-blue-900/30 text-center">Play / Pause</button>
+                    <button id="stopBtn" class="flex-1 py-2 bg-rose-600 hover:bg-rose-500 font-semibold rounded-xl transition text-xs text-center">Stop</button>
+                </div>
+                <div class="flex gap-2">
+                    <button id="startFromWordBtn" class="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition text-xs shadow-sm">Start from Word</button>
+                    <button id="clearSelectionBtn" class="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl transition text-xs border border-slate-700">Clear Word</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL: Full Screen Text Viewer -->
+        <div class="lg:col-span-8 bg-slate-900 p-6 rounded-2xl shadow-xl border border-slate-800 flex flex-col h-full overflow-hidden">
+            <div class="flex justify-between items-center mb-2 flex-shrink-0">
+                <h2 class="text-lg font-bold text-blue-400">Full Text Viewer</h2>
+                <div class="flex items-center gap-3">
+                    <span class="text-xs text-slate-500">Click any word to jump-start reading</span>
+                    <button id="openModalBtn" class="px-3 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/30 rounded-lg text-xs font-semibold transition">🖟 Fullscreen Popup</button>
+                </div>
+            </div>
+            
+            <div id="textViewBox" class="w-full p-5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 flex-grow overflow-y-auto leading-loose text-base select-text" style="white-space: pre-wrap; direction: ltr;">Your loaded text will appear here fully across your wide screen...</div>
+        </div>
+
+    </div>
+
+    <!-- MODAL POPUP WINDOW -->
+    <div id="fullscreenModal" class="fixed inset-0 bg-slate-950 z-50 hidden flex flex-col p-4 lg:p-6">
+        <div class="flex justify-between items-center mb-3 flex-shrink-0">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-bold text-blue-400">Immersive Text Viewer</h2>
+                <button id="toggleEditModeBtn" class="px-3 py-1 bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-semibold transition">✏️ Edit Mode: OFF</button>
+                <button id="toggleDirectionBtn" class="px-3 py-1 bg-purple-600/20 hover:bg-purple-600/40 text-purple-400 border border-purple-500/30 rounded-lg text-xs font-semibold transition">🌐 Direction: LTR</button>
+            </div>
+            <button id="closeModalBtn" class="w-9 h-9 bg-slate-800 hover:bg-rose-600 text-slate-100 font-bold rounded-xl flex items-center justify-center transition text-base shadow-lg">✕</button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-grow overflow-hidden">
+            <div class="lg:col-span-10 bg-slate-900 p-5 rounded-2xl border border-slate-800 flex flex-col h-full overflow-hidden relative">
+                <div id="modalTextViewBox" class="w-full p-6 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 flex-grow overflow-y-auto leading-loose text-lg select-text" style="white-space: pre-wrap; direction: ltr;" contenteditable="false">Your loaded text will appear here...</div>
+            </div>
+
+            <div class="lg:col-span-2 bg-slate-900 p-4 rounded-2xl border border-slate-800 flex flex-col justify-between h-full">
+                <div class="space-y-3">
+                    <h3 class="text-xs font-bold text-blue-300 uppercase tracking-wider">Controls</h3>
+                    <div class="space-y-2">
+                        <button id="modalPlayBtn" class="w-full py-2 bg-blue-600 hover:bg-blue-500 font-semibold rounded-xl transition text-xs shadow-lg text-center">Play / Pause</button>
+                        <button id="modalStopBtn" class="w-full py-2 bg-rose-600 hover:bg-rose-500 font-semibold rounded-xl transition text-xs text-center">Stop</button>
+                        <button id="modalStartFromWordBtn" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl transition text-[11px] text-center shadow-sm">Start from Word</button>
+                        <button id="modalClearBtn" class="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold rounded-xl transition text-[11px] border border-slate-700">Clear Word</button>
+                    </div>
+                </div>
+                <div class="text-[10px] text-slate-500 text-center leading-tight">Press SPACE to Play/Pause</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const synth = window.speechSynthesis;
+        const textInput = document.getElementById('textInput');
+        const textViewBox = document.getElementById('textViewBox');
+        const modalTextViewBox = document.getElementById('modalTextViewBox');
+        const toggleEditModeBtn = document.getElementById('toggleEditModeBtn');
+        const toggleDirectionBtn = document.getElementById('toggleDirectionBtn');
+        const voiceSelect = document.getElementById('voiceSelect');
+        const rateInput = document.getElementById('rate');
+        const rateVal = document.getElementById('rateVal');
+        const statusText = document.getElementById('status');
+        const restartFreshBtn = document.getElementById('restartFreshBtn');
+        
+        const fullscreenModal = document.getElementById('fullscreenModal');
+        const openModalBtn = document.getElementById('openModalBtn');
+        const closeModalBtn = document.getElementById('closeModalBtn');
+
+        let voices = [];
+        let selectedStartIndex = 0; 
+        let rawTextContent = "";
+        let wordSpansMain = [];
+        let wordSpansModal = [];
+        let isEditing = false;
+        let currentDirection = 'ltr';
+        let currentUtterance = null; // Fix: Prevent garbage collection of utterance objects
+
+        function loadFromStorage() {
+            const savedText = localStorage.getItem('tts_rawText');
+            const savedRate = localStorage.getItem('tts_rate');
+            const savedDir = localStorage.getItem('tts_dir');
+            
+            if (savedText) {
+                rawTextContent = savedText;
+                textInput.value = savedText;
+                renderViewersFromRawText();
+            }
+            if (savedRate && parseFloat(savedRate) <= 2.0) {
+                rateInput.value = savedRate;
+                rateVal.textContent = savedRate;
+            } else {
+                rateInput.value = "1.0";
+                rateVal.textContent = "1.0";
+            }
+            if (savedDir) {
+                setDirection(savedDir);
+            }
+        }
+
+        function saveToStorage() {
+            localStorage.setItem('tts_rawText', rawTextContent);
+            localStorage.setItem('tts_rate', rateInput.value);
+            localStorage.setItem('tts_voiceIndex', voiceSelect.value);
+            localStorage.setItem('tts_dir', currentDirection);
+        }
+
+        function populateVoices() {
+            voices = synth.getVoices();
+            if (voices.length === 0) return;
+            
+            voiceSelect.innerHTML = '';
+            statusText.textContent = `Loaded ${voices.length} system voices.`;
+
+            voices.sort((a, b) => a.lang.localeCompare(b.lang));
+
+            voices.forEach((voice, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                let tag = '';
+                if (voice.lang.startsWith('es')) tag = ' [SPANISH 🇪🇸]';
+                else if (voice.lang.startsWith('ar')) tag = ' [ARABIC 🟢]';
+                else if (voice.lang.startsWith('fr')) tag = ' [FRENCH 🇫🇷]';
+                else if (voice.lang.startsWith('en')) tag = ' [ENGLISH 🇺🇸]';
+                
+                option.textContent = `${voice.name} (${voice.lang})${tag}`;
+                voiceSelect.appendChild(option);
+            });
+
+            const savedVoiceIdx = localStorage.getItem('tts_voiceIndex');
+            if (savedVoiceIdx !== null && voices[savedVoiceIdx]) {
+                voiceSelect.value = savedVoiceIdx;
+            }
+        }
+
+        populateVoices();
+        if (synth.onvoiceschanged !== undefined) {
+            synth.onvoiceschanged = populateVoices;
+        }
+
+        document.getElementById('refreshBtn').addEventListener('click', populateVoices);
+
+        rateInput.addEventListener('input', () => {
+            rateVal.textContent = rateInput.value;
+            saveToStorage();
+        });
+
+        voiceSelect.addEventListener('change', () => {
+            saveToStorage();
+        });
+
+        function setDirection(dir) {
+            currentDirection = dir;
+            textViewBox.style.direction = dir;
+            modalTextViewBox.style.direction = dir;
+            toggleDirectionBtn.textContent = dir === 'rtl' ? "🌐 Direction: RTL" : "🌐 Direction: LTR";
+        }
+
+        toggleDirectionBtn.addEventListener('click', () => {
+            setDirection(currentDirection === 'ltr' ? 'rtl' : 'ltr');
+            saveToStorage();
+        });
+
+        function loadTextToViewers() {
+            synth.cancel();
+            selectedStartIndex = 0;
+            rawTextContent = textInput.value;
+            
+            if (/[\u0600-\u06FF]/.test(rawTextContent)) {
+                setDirection('rtl');
+            } else {
+                setDirection('ltr');
+            }
+            
+            renderViewersFromRawText();
+            saveToStorage();
+        }
+
+        function renderViewersFromRawText() {
+            if (!rawTextContent.trim()) {
+                textViewBox.innerHTML = 'Your loaded text will appear here fully across your wide screen...';
+                modalTextViewBox.innerHTML = 'Your loaded text will appear here...';
+                return;
+            }
+
+            textViewBox.innerHTML = '';
+            modalTextViewBox.innerHTML = '';
+            wordSpansMain = [];
+            wordSpansModal = [];
+            
+            let charPointer = 0;
+            const words = rawTextContent.split(/(\s+)/);
+            
+            words.forEach((chunk) => {
+                const span1 = document.createElement('span');
+                span1.textContent = chunk;
+                span1.className = 'word-span';
+                
+                const span2 = document.createElement('span');
+                span2.textContent = chunk;
+                span2.className = 'word-span';
+
+                const currentIdx = charPointer;
+                
+                const selectAction = () => {
+                    if (isEditing) return;
+                    document.querySelectorAll('.word-span').forEach(s => s.classList.remove('selected-start'));
+                    span1.classList.add('selected-start');
+                    span2.classList.add('selected-start');
+                    selectedStartIndex = currentIdx;
+                };
+
+                span1.addEventListener('click', selectAction);
+                span2.addEventListener('click', selectAction);
+
+                textViewBox.appendChild(span1);
+                modalTextViewBox.appendChild(span2);
+
+                wordSpansMain.push({ start: charPointer, length: chunk.length, element: span1 });
+                wordSpansModal.push({ start: charPointer, length: chunk.length, element: span2 });
+
+                charPointer += chunk.length;
+            });
+        }
+
+        document.getElementById('loadTextBtn').addEventListener('click', loadTextToViewers);
+
+        restartFreshBtn.addEventListener('click', () => {
+            if (confirm("Are you sure you want to restart fresh? This will clear all saved text and settings.")) {
+                synth.cancel();
+                localStorage.clear();
+                rawTextContent = "";
+                textInput.value = "";
+                rateInput.value = "1.0";
+                rateVal.textContent = "1.0";
+                selectedStartIndex = 0;
+                setDirection('ltr');
+                if (isEditing) toggleEditModeBtn.click();
+                renderViewersFromRawText();
+                statusText.textContent = `Cleared memory. Ready.`;
+            }
+        });
+
+        toggleEditModeBtn.addEventListener('click', () => {
+            isEditing = !isEditing;
+            if (isEditing) {
+                synth.cancel();
+                modalTextViewBox.setAttribute('contenteditable', 'true');
+                modalTextViewBox.focus();
+                modalTextViewBox.classList.add('border-amber-500/50', 'bg-slate-900');
+                
+                toggleEditModeBtn.textContent = "💾 Save Changes";
+                toggleEditModeBtn.className = "px-3 py-1 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold transition";
+            } else {
+                rawTextContent = modalTextViewBox.innerText;
+                textInput.value = rawTextContent; 
+                
+                modalTextViewBox.setAttribute('contenteditable', 'false');
+                modalTextViewBox.classList.remove('border-amber-500/50', 'bg-slate-900');
+                
+                renderViewersFromRawText();
+                saveToStorage();
+                
+                toggleEditModeBtn.textContent = "✏️ Edit Mode: OFF";
+                toggleEditModeBtn.className = "px-3 py-1 bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 border border-amber-500/30 rounded-lg text-xs font-semibold transition";
+            }
+        });
+
+        openModalBtn.addEventListener('click', () => fullscreenModal.classList.remove('hidden'));
+        closeModalBtn.addEventListener('click', () => {
+            if (isEditing) toggleEditModeBtn.click();
+            fullscreenModal.classList.add('hidden');
+        });
+
+        function clearSelection() {
+            selectedStartIndex = 0;
+            document.querySelectorAll('.word-span').forEach(s => s.classList.remove('selected-start'));
+        }
+
+        document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
+        document.getElementById('modalClearBtn').addEventListener('click', clearSelection);
+
+        function updateHighlight(absoluteCharIndex) {
+            document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
+
+            const matchedMain = wordSpansMain.find(w => absoluteCharIndex >= w.start && absoluteCharIndex < w.start + w.length);
+            if (matchedMain) matchedMain.element.classList.add('speaking-highlight');
+
+            const matchedModal = wordSpansModal.find(w => absoluteCharIndex >= w.start && absoluteCharIndex < w.start + w.length);
+            if (matchedModal) matchedModal.element.classList.add('speaking-highlight');
+        }
+
+        function playSpeech(fromCharIndex) {
+            if (isEditing || !rawTextContent.trim()) return;
+
+            synth.cancel();
+
+            setTimeout(() => {
+                const textToSpeak = rawTextContent.substring(fromCharIndex);
+                if (!textToSpeak.trim()) return;
+
+                // Assign to global variable to prevent garbage collection bug
+                currentUtterance = new SpeechSynthesisUtterance(textToSpeak);
+                const selectedVoice = voices[voiceSelect.value];
+                
+                if (selectedVoice) {
+                    currentUtterance.voice = selectedVoice;
+                    currentUtterance.lang = selectedVoice.lang;
+                }
+                
+                currentUtterance.rate = Math.min(Math.max(parseFloat(rateInput.value), 0.5), 2.0);
+
+                currentUtterance.addEventListener('boundary', (event) => {
+                    if (event.name === 'word') {
+                        updateHighlight(fromCharIndex + event.charIndex);
+                    }
+                });
+
+                currentUtterance.addEventListener('end', () => {
+                    document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
+                });
+
+                synth.resume();
+                synth.speak(currentUtterance);
+            }, 100);
+        }
+
+        function startFromChosenWord() {
+            if (!isEditing) playSpeech(selectedStartIndex);
+        }
+
+        document.getElementById('startFromWordBtn').addEventListener('click', startFromChosenWord);
+        document.getElementById('modalStartFromWordBtn').addEventListener('click', startFromChosenWord);
+
+        function togglePlayPause() {
+            if (isEditing) return;
+            if (synth.speaking && !synth.paused) {
+                synth.pause();
+            } else if (synth.paused) {
+                synth.resume();
+            } else {
+                playSpeech(selectedStartIndex);
+            }
+        }
+
+        document.getElementById('playBtn').addEventListener('click', togglePlayPause);
+        document.getElementById('modalPlayBtn').addEventListener('click', togglePlayPause);
+
+        function stopSpeech() {
+            synth.cancel();
+            document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
+        }
+
+        document.getElementById('stopBtn').addEventListener('click', stopSpeech);
+        document.getElementById('modalStopBtn').addEventListener('click', stopSpeech);
+
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                if (document.activeElement === textInput || document.activeElement === modalTextViewBox) return;
+                e.preventDefault();
+                togglePlayPause();
+            }
+        });
+
+        loadFromStorage();
+    </script>
+</body>
+</html>
