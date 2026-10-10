@@ -155,7 +155,11 @@
         let isEditing = false;
         let currentDirection = 'ltr';
 
-        // Kill audio instantly if the user closes or unloads the page
+        // Chunking queue variables
+        let speechChunks = [];
+        let currentChunkIndex = 0;
+        let globalCharOffset = 0;
+
         window.addEventListener('beforeunload', () => {
             synth.cancel();
         });
@@ -381,40 +385,76 @@
             if (matchedModal) matchedModal.element.classList.add('speaking-highlight');
         }
 
-        // Direct single-instance speech stream (clean, instant, reliable)
+        // Safe Chunking Engine to handle large text without freezing browser memory
         function playSpeech(fromCharIndex) {
             if (isEditing || !rawTextContent.trim()) return;
 
             synth.cancel();
 
             setTimeout(() => {
-                const textToSpeak = rawTextContent.substring(fromCharIndex);
-                if (!textToSpeak.trim()) return;
+                const textToProcess = rawTextContent.substring(fromCharIndex);
+                if (!textToProcess.trim()) return;
 
-                const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                const selectedVoice = voices[voiceSelect.value];
-                
-                if (selectedVoice) {
-                    utterance.voice = selectedVoice;
-                    utterance.lang = selectedVoice.lang;
-                }
-                
-                utterance.rate = Math.min(Math.max(parseFloat(rateInput.value), 0.5), 2.0);
+                // Split text into safe chunks (max ~200 characters per chunk split by sentence or space)
+                speechChunks = [];
+                const regex = /[^.!?\n]+[.!?\n]+|\s*[\r\n]+|[^\s]+(\s+|$)/g;
+                let match;
+                let tempChunk = "";
 
-                utterance.addEventListener('boundary', (event) => {
-                    if (event.name === 'word') {
-                        updateHighlight(fromCharIndex + event.charIndex);
+                while ((match = regex.exec(textToProcess)) !== null) {
+                    tempChunk += match[0];
+                    if (tempChunk.length >= 200) {
+                        speechChunks.push({ text: tempChunk, offset: fromCharIndex + (textToProcess.indexOf(tempChunk)) });
+                        tempChunk = "";
                     }
-                });
+                }
+                if (tempChunk.trim()) {
+                    speechChunks.push({ text: tempChunk, offset: fromCharIndex + (textToProcess.length - tempChunk.length) });
+                }
 
-                utterance.addEventListener('end', () => {
-                    document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
-                    statusText.textContent = "Playback completed.";
-                });
+                currentChunkIndex = 0;
+                globalCharOffset = fromCharIndex;
 
-                synth.speak(utterance);
-                statusText.textContent = "Playing...";
+                processNextChunk();
             }, 50);
+        }
+
+        function processNextChunk() {
+            if (currentChunkIndex >= speechChunks.length) {
+                document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
+                statusText.textContent = "Playback completed.";
+                return;
+            }
+
+            const currentObj = speechChunks[currentChunkIndex];
+            const utterance = new SpeechSynthesisUtterance(currentObj.text);
+            const selectedVoice = voices[voiceSelect.value];
+            
+            if (selectedVoice) {
+                utterance.voice = selectedVoice;
+                utterance.lang = selectedVoice.lang;
+            }
+            
+            utterance.rate = Math.min(Math.max(parseFloat(rateInput.value), 0.5), 2.0);
+
+            utterance.addEventListener('boundary', (event) => {
+                if (event.name === 'word') {
+                    updateHighlight(currentObj.offset + event.charIndex);
+                }
+            });
+
+            utterance.addEventListener('end', () => {
+                currentChunkIndex++;
+                processNextChunk();
+            });
+
+            utterance.addEventListener('error', () => {
+                currentChunkIndex++;
+                processNextChunk();
+            });
+
+            synth.speak(utterance);
+            statusText.textContent = `Playing chunk ${currentChunkIndex + 1} of ${speechChunks.length}...`;
         }
 
         function startFromChosenWord() {
