@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Widescreen Split-Screen Cloud TTS Reader</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Widescreen Split-Screen TTS Reader</title>
+    <!-- Tailwind CSS Production Build Script -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <style>
         .selected-start {
             background-color: #3b82f6;
@@ -39,10 +40,10 @@
         <div class="lg:col-span-4 bg-slate-900 p-5 rounded-2xl shadow-xl border border-slate-800 flex flex-col justify-between h-full">
             <div>
                 <div class="flex justify-between items-center mb-1">
-                    <h1 class="text-xl font-bold text-blue-400">Cloud TTS Control</h1>
+                    <h1 class="text-xl font-bold text-blue-400">TTS Control Panel</h1>
                     <button id="restartFreshBtn" class="px-2 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-400 border border-rose-500/30 rounded-lg text-[11px] font-semibold transition" title="Clear all memory and start fresh">🔄 Restart Fresh</button>
                 </div>
-                <p class="text-xs text-slate-400 mb-3">Paste text below, select a cloud voice, and play.</p>
+                <p class="text-xs text-slate-400 mb-3">Paste text below, select your voice, and control playback.</p>
                 
                 <!-- Quick Paste Box Area -->
                 <div class="mb-3">
@@ -53,29 +54,13 @@
 
                 <!-- Controls Stack -->
                 <div class="space-y-3 mb-3">
-                    <!-- Voice Selector (Curated Free Online Voices) -->
+                    <!-- Voice Selector -->
                     <div>
-                        <label class="block text-xs font-medium mb-1 text-slate-300">Cloud Voice:</label>
-                        <select id="voiceSelect" class="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-blue-500 text-xs">
-                            <optgroup label="🇪🇸 Spanish Voices">
-                                <option value="Enrique">Enrique (Spain - Male)</option>
-                                <option value="Conchita">Conchita (Spain - Female)</option>
-                                <option value="Mia">Mia (Mexico - Female)</option>
-                                <option value="Lupe">Lupe (US Spanish - Female)</option>
-                            </optgroup>
-                            <optgroup label="🟢 Arabic Voices">
-                                <option value="Zeina">Zeina (Arabic - Female)</option>
-                            </optgroup>
-                            <optgroup label="🇫🇷 French Voices">
-                                <option value="Celine">Céline (France - Female)</option>
-                                <option value="Mathieu">Mathieu (France - Male)</option>
-                            </optgroup>
-                            <optgroup label="🇺🇸 English Voices">
-                                <option value="Brian">Brian (UK - Male)</option>
-                                <option value="Amy">Amy (UK - Female)</option>
-                                <option value="Joanna">Joanna (US - Female)</option>
-                            </optgroup>
-                        </select>
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="block text-xs font-medium text-slate-300">Voice:</label>
+                            <button id="refreshBtn" class="text-xs text-blue-400 hover:underline">🔄 Refresh Voices</button>
+                        </div>
+                        <select id="voiceSelect" class="w-full p-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 focus:outline-none focus:border-blue-500 text-xs"></select>
                     </div>
 
                     <!-- Speed Control -->
@@ -88,7 +73,7 @@
 
             <!-- Bottom Section: Status & Action Buttons -->
             <div>
-                <div id="status" class="text-[11px] text-slate-400 mb-2">Ready (Cloud TTS Engine Active).</div>
+                <div id="status" class="text-[11px] text-slate-400 mb-2">Loading system voices...</div>
                 <div class="flex gap-2 mb-2">
                     <button id="playBtn" class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 font-semibold rounded-xl transition text-xs shadow-lg shadow-blue-900/30 text-center">Play / Pause</button>
                     <button id="stopBtn" class="flex-1 py-2 bg-rose-600 hover:bg-rose-500 font-semibold rounded-xl transition text-xs text-center">Stop</button>
@@ -147,6 +132,7 @@
     </div>
 
     <script>
+        const synth = window.speechSynthesis;
         const textInput = document.getElementById('textInput');
         const textViewBox = document.getElementById('textViewBox');
         const modalTextViewBox = document.getElementById('modalTextViewBox');
@@ -162,18 +148,18 @@
         const openModalBtn = document.getElementById('openModalBtn');
         const closeModalBtn = document.getElementById('closeModalBtn');
 
+        let voices = [];
         let selectedStartIndex = 0; 
         let rawTextContent = "";
         let wordSpansMain = [];
         let wordSpansModal = [];
         let isEditing = false;
         let currentDirection = 'ltr';
-        let currentAudio = null;
+        let currentUtterance = null;
 
         function loadFromStorage() {
             const savedText = localStorage.getItem('tts_rawText');
             const savedRate = localStorage.getItem('tts_rate');
-            const savedVoice = localStorage.getItem('tts_cloudVoice');
             const savedDir = localStorage.getItem('tts_dir');
             
             if (savedText) {
@@ -181,12 +167,12 @@
                 textInput.value = savedText;
                 renderViewersFromRawText();
             }
-            if (savedRate) {
+            if (savedRate && parseFloat(savedRate) <= 2.0) {
                 rateInput.value = savedRate;
                 rateVal.textContent = savedRate;
-            }
-            if (savedVoice) {
-                voiceSelect.value = savedVoice;
+            } else {
+                rateInput.value = "1.0";
+                rateVal.textContent = "1.0";
             }
             if (savedDir) {
                 setDirection(savedDir);
@@ -196,15 +182,56 @@
         function saveToStorage() {
             localStorage.setItem('tts_rawText', rawTextContent);
             localStorage.setItem('tts_rate', rateInput.value);
-            localStorage.setItem('tts_cloudVoice', voiceSelect.value);
+            localStorage.setItem('tts_voiceIndex', voiceSelect.value);
             localStorage.setItem('tts_dir', currentDirection);
         }
 
+        function populateVoices() {
+            voices = synth.getVoices();
+            if (!voices || voices.length === 0) return;
+            
+            voiceSelect.innerHTML = '';
+            statusText.textContent = `Loaded ${voices.length} system voices.`;
+
+            // Sort so Spanish (es) and Arabic (ar) appear at the top for convenience
+            voices.sort((a, b) => {
+                if (a.lang.startsWith('es') && !b.lang.startsWith('es')) return -1;
+                if (!a.lang.startsWith('es') && b.lang.startsWith('es')) return 1;
+                if (a.lang.startsWith('ar') && !b.lang.startsWith('ar')) return -1;
+                if (!a.lang.startsWith('ar') && b.lang.startsWith('ar')) return 1;
+                return a.lang.localeCompare(b.lang);
+            });
+
+            voices.forEach((voice, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                let tag = '';
+                if (voice.lang.startsWith('es')) tag = ' [SPANISH 🇪🇸]';
+                else if (voice.lang.startsWith('ar')) tag = ' [ARABIC 🟢]';
+                else if (voice.lang.startsWith('fr')) tag = ' [FRENCH 🇫🇷]';
+                else if (voice.lang.startsWith('en')) tag = ' [ENGLISH 🇺🇸]';
+                
+                option.textContent = `${voice.name} (${voice.lang})${tag}`;
+                voiceSelect.appendChild(option);
+            });
+
+            const savedVoiceIdx = localStorage.getItem('tts_voiceIndex');
+            if (savedVoiceIdx !== null && voices[savedVoiceIdx]) {
+                voiceSelect.value = savedVoiceIdx;
+            }
+        }
+
+        // Trigger voice loading safely across all asynchronous browser loaders
+        populateVoices();
+        if (typeof synth !== 'undefined' && synth.onvoiceschanged !== undefined) {
+            synth.onvoiceschanged = populateVoices;
+        }
+        setTimeout(populateVoices, 500); // Backup poll for slow-loading mobile/desktop environments
+
+        document.getElementById('refreshBtn').addEventListener('click', populateVoices);
+
         rateInput.addEventListener('input', () => {
             rateVal.textContent = rateInput.value;
-            if (currentAudio) {
-                currentAudio.playbackRate = parseFloat(rateInput.value);
-            }
             saveToStorage();
         });
 
@@ -225,13 +252,12 @@
         });
 
         function loadTextToViewers() {
-            stopSpeech();
+            synth.cancel();
             selectedStartIndex = 0;
             rawTextContent = textInput.value;
             
             if (/[\u0600-\u06FF]/.test(rawTextContent)) {
                 setDirection('rtl');
-                voiceSelect.value = 'Zeina'; // Auto-select Arabic voice if text is Arabic
             } else {
                 setDirection('ltr');
             }
@@ -291,7 +317,7 @@
 
         restartFreshBtn.addEventListener('click', () => {
             if (confirm("Are you sure you want to restart fresh? This will clear all saved text and settings.")) {
-                stopSpeech();
+                synth.cancel();
                 localStorage.clear();
                 rawTextContent = "";
                 textInput.value = "";
@@ -308,7 +334,7 @@
         toggleEditModeBtn.addEventListener('click', () => {
             isEditing = !isEditing;
             if (isEditing) {
-                stopSpeech();
+                synth.cancel();
                 modalTextViewBox.setAttribute('contenteditable', 'true');
                 modalTextViewBox.focus();
                 modalTextViewBox.classList.add('border-amber-500/50', 'bg-slate-900');
@@ -357,59 +383,56 @@
         function playSpeech(fromCharIndex) {
             if (isEditing || !rawTextContent.trim()) return;
 
-            stopSpeech();
+            synth.cancel();
 
-            const textToSpeak = rawTextContent.substring(fromCharIndex);
-            if (!textToSpeak.trim()) return;
+            setTimeout(() => {
+                const textToSpeak = rawTextContent.substring(fromCharIndex);
+                if (!textToSpeak.trim()) return;
 
-            const selectedVoice = voiceSelect.value;
-            const encodedText = encodeURIComponent(textToSpeak);
-            const audioUrl = `https://api.streamelements.com/kappa/v2/speech?voice=${selectedVoice}&text=${encodedText}`;
+                currentUtterance = new SpeechSynthesisUtterance(textToSpeak);
+                const selectedVoice = voices[voiceSelect.value];
+                
+                if (selectedVoice) {
+                    currentUtterance.voice = selectedVoice;
+                    currentUtterance.lang = selectedVoice.lang;
+                }
+                
+                currentUtterance.rate = Math.min(Math.max(parseFloat(rateInput.value), 0.5), 2.0);
 
-            statusText.textContent = `Streaming voice (${selectedVoice})...`;
-            currentAudio = new Audio(audioUrl);
-            currentAudio.playbackRate = parseFloat(rateInput.value);
+                currentUtterance.addEventListener('boundary', (event) => {
+                    if (event.name === 'word') {
+                        updateHighlight(fromCharIndex + event.charIndex);
+                    }
+                });
 
-            currentAudio.addEventListener('timeupdate', () => {
-                if (!currentAudio.duration || isNaN(currentAudio.duration)) return;
-                const progress = currentAudio.currentTime / currentAudio.duration;
-                const charTargetIndex = fromCharIndex + Math.floor(progress * textToSpeak.length);
-                updateHighlight(charTargetIndex);
-            });
+                currentUtterance.addEventListener('end', () => {
+                    document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
+                    statusText.textContent = "Playback completed.";
+                });
 
-            currentAudio.addEventListener('ended', () => {
-                document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
-                statusText.textContent = `Playback finished.`;
-            });
-
-            currentAudio.play().then(() => {
-                statusText.textContent = `Playing (${selectedVoice})...`;
-            }).catch(err => {
-                console.error("Audio playback error:", err);
-                statusText.textContent = `Error playing audio. Check internet.`;
-            });
+                synth.resume();
+                synth.speak(currentUtterance);
+                statusText.textContent = "Playing...";
+            }, 100);
         }
 
         function startFromChosenWord() {
             if (!isEditing) playSpeech(selectedStartIndex);
         }
 
-        document.getElementById('startFromWordBtn').addEventListener('click', startFromChosenWord);
+        document.getElementById('startFromWordBtn').appendEventListener ? document.getElementById('startFromWordBtn').addEventListener('click', startFromChosenWord) : document.getElementById('startFromWordBtn').addEventListener('click', startFromChosenWord);
         document.getElementById('modalStartFromWordBtn').addEventListener('click', startFromChosenWord);
 
         function togglePlayPause() {
             if (isEditing) return;
-            if (!currentAudio) {
-                playSpeech(selectedStartIndex);
-                return;
-            }
-
-            if (currentAudio.paused) {
-                currentAudio.play();
-                statusText.textContent = `Resumed.`;
+            if (synth.speaking && !synth.paused) {
+                synth.pause();
+                statusText.textContent = "Paused.";
+            } else if (synth.paused) {
+                synth.resume();
+                statusText.textContent = "Resumed.";
             } else {
-                currentAudio.pause();
-                statusText.textContent = `Paused.`;
+                playSpeech(selectedStartIndex);
             }
         }
 
@@ -417,13 +440,9 @@
         document.getElementById('modalPlayBtn').addEventListener('click', togglePlayPause);
 
         function stopSpeech() {
-            if (currentAudio) {
-                currentAudio.pause();
-                currentAudio.currentTime = 0;
-                currentAudio = null;
-            }
+            synth.cancel();
             document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
-            statusText.textContent = `Stopped.`;
+            statusText.textContent = "Stopped.";
         }
 
         document.getElementById('stopBtn').addEventListener('click', stopSpeech);
