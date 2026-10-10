@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Widescreen Split-Screen TTS Reader</title>
-    <!-- Tailwind CSS Production Build Script -->
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <style>
         .selected-start {
@@ -155,6 +154,11 @@
         let wordSpansModal = [];
         let isEditing = false;
         let currentDirection = 'ltr';
+
+        // Kill audio instantly if the user closes or unloads the page
+        window.addEventListener('beforeunload', () => {
+            synth.cancel();
+        });
 
         function loadFromStorage() {
             const savedText = localStorage.getItem('tts_rawText');
@@ -377,79 +381,38 @@
             if (matchedModal) matchedModal.element.classList.add('speaking-highlight');
         }
 
-        // Chunking speech engine to start instantly on large texts without freezing
+        // Direct single-instance speech stream (clean, instant, reliable)
         function playSpeech(fromCharIndex) {
             if (isEditing || !rawTextContent.trim()) return;
 
             synth.cancel();
 
             setTimeout(() => {
-                const fullTextToSpeak = rawTextContent.substring(fromCharIndex);
-                if (!fullTextToSpeak.trim()) return;
+                const textToSpeak = rawTextContent.substring(fromCharIndex);
+                if (!textToSpeak.trim()) return;
 
-                // Split text into safe chunk sizes (~180 characters per chunk) by sentences/spaces to stream instantly
-                const chunks = [];
-                const regex = /[^.!?\n]+[.!?\n]+|\s*[\r\n]+|[^\s]+(\s+|$)/g;
-                let match;
-                let currentChunk = "";
-
-                while ((match = regex.exec(fullTextToSpeak)) !== null) {
-                    currentChunk += match[0];
-                    if (currentChunk.length >= 180) {
-                        chunks.push(currentChunk);
-                        currentChunk = "";
-                    }
-                }
-                if (currentChunk.trim()) {
-                    chunks.push(currentChunk);
-                }
-
+                const utterance = new SpeechSynthesisUtterance(textToSpeak);
                 const selectedVoice = voices[voiceSelect.value];
-                const speechRate = Math.min(Math.max(parseFloat(rateInput.value), 0.5), 2.0);
-                let currentGlobalIndex = fromCharIndex;
-
-                let chunkIndex = 0;
-
-                function speakNextChunk() {
-                    if (chunkIndex >= chunks.length) {
-                        document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
-                        statusText.textContent = "Playback completed.";
-                        return;
-                    }
-
-                    const chunkText = chunks[chunkIndex];
-                    const chunkStartIndex = currentGlobalIndex;
-                    const utterance = new SpeechSynthesisUtterance(chunkText);
-
-                    if (selectedVoice) {
-                        utterance.voice = selectedVoice;
-                        utterance.lang = selectedVoice.lang;
-                    }
-                    utterance.rate = speechRate;
-
-                    utterance.addEventListener('boundary', (event) => {
-                        if (event.name === 'word') {
-                            updateHighlight(chunkStartIndex + event.charIndex);
-                        }
-                    });
-
-                    utterance.addEventListener('end', () => {
-                        currentGlobalIndex += chunkText.length;
-                        chunkIndex++;
-                        speakNextChunk();
-                    });
-
-                    utterance.addEventListener('error', (e) => {
-                        console.error("Speech synthesis error:", e);
-                        chunkIndex++;
-                        speakNextChunk();
-                    });
-
-                    synth.speak(utterance);
+                
+                if (selectedVoice) {
+                    utterance.voice = selectedVoice;
+                    utterance.lang = selectedVoice.lang;
                 }
+                
+                utterance.rate = Math.min(Math.max(parseFloat(rateInput.value), 0.5), 2.0);
 
-                synth.resume();
-                speakNextChunk();
+                utterance.addEventListener('boundary', (event) => {
+                    if (event.name === 'word') {
+                        updateHighlight(fromCharIndex + event.charIndex);
+                    }
+                });
+
+                utterance.addEventListener('end', () => {
+                    document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
+                    statusText.textContent = "Playback completed.";
+                });
+
+                synth.speak(utterance);
                 statusText.textContent = "Playing...";
             }, 50);
         }
