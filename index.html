@@ -155,7 +155,6 @@
         let wordSpansModal = [];
         let isEditing = false;
         let currentDirection = 'ltr';
-        let currentUtterance = null;
 
         function loadFromStorage() {
             const savedText = localStorage.getItem('tts_rawText');
@@ -193,7 +192,6 @@
             voiceSelect.innerHTML = '';
             statusText.textContent = `Loaded ${voices.length} system voices.`;
 
-            // Sort so Spanish (es) and Arabic (ar) appear at the top for convenience
             voices.sort((a, b) => {
                 if (a.lang.startsWith('es') && !b.lang.startsWith('es')) return -1;
                 if (!a.lang.startsWith('es') && b.lang.startsWith('es')) return 1;
@@ -221,12 +219,11 @@
             }
         }
 
-        // Trigger voice loading safely across all asynchronous browser loaders
         populateVoices();
         if (typeof synth !== 'undefined' && synth.onvoiceschanged !== undefined) {
             synth.onvoiceschanged = populateVoices;
         }
-        setTimeout(populateVoices, 500); // Backup poll for slow-loading mobile/desktop environments
+        setTimeout(populateVoices, 500);
 
         document.getElementById('refreshBtn').addEventListener('click', populateVoices);
 
@@ -380,47 +377,88 @@
             if (matchedModal) matchedModal.element.classList.add('speaking-highlight');
         }
 
+        // Chunking speech engine to start instantly on large texts without freezing
         function playSpeech(fromCharIndex) {
             if (isEditing || !rawTextContent.trim()) return;
 
             synth.cancel();
 
             setTimeout(() => {
-                const textToSpeak = rawTextContent.substring(fromCharIndex);
-                if (!textToSpeak.trim()) return;
+                const fullTextToSpeak = rawTextContent.substring(fromCharIndex);
+                if (!fullTextToSpeak.trim()) return;
 
-                currentUtterance = new SpeechSynthesisUtterance(textToSpeak);
-                const selectedVoice = voices[voiceSelect.value];
-                
-                if (selectedVoice) {
-                    currentUtterance.voice = selectedVoice;
-                    currentUtterance.lang = selectedVoice.lang;
-                }
-                
-                currentUtterance.rate = Math.min(Math.max(parseFloat(rateInput.value), 0.5), 2.0);
+                // Split text into safe chunk sizes (~180 characters per chunk) by sentences/spaces to stream instantly
+                const chunks = [];
+                const regex = /[^.!?\n]+[.!?\n]+|\s*[\r\n]+|[^\s]+(\s+|$)/g;
+                let match;
+                let currentChunk = "";
 
-                currentUtterance.addEventListener('boundary', (event) => {
-                    if (event.name === 'word') {
-                        updateHighlight(fromCharIndex + event.charIndex);
+                while ((match = regex.exec(fullTextToSpeak)) !== null) {
+                    currentChunk += match[0];
+                    if (currentChunk.length >= 180) {
+                        chunks.push(currentChunk);
+                        currentChunk = "";
                     }
-                });
+                }
+                if (currentChunk.trim()) {
+                    chunks.push(currentChunk);
+                }
 
-                currentUtterance.addEventListener('end', () => {
-                    document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
-                    statusText.textContent = "Playback completed.";
-                });
+                const selectedVoice = voices[voiceSelect.value];
+                const speechRate = Math.min(Math.max(parseFloat(rateInput.value), 0.5), 2.0);
+                let currentGlobalIndex = fromCharIndex;
+
+                let chunkIndex = 0;
+
+                function speakNextChunk() {
+                    if (chunkIndex >= chunks.length) {
+                        document.querySelectorAll('.word-span').forEach(s => s.classList.remove('speaking-highlight'));
+                        statusText.textContent = "Playback completed.";
+                        return;
+                    }
+
+                    const chunkText = chunks[chunkIndex];
+                    const chunkStartIndex = currentGlobalIndex;
+                    const utterance = new SpeechSynthesisUtterance(chunkText);
+
+                    if (selectedVoice) {
+                        utterance.voice = selectedVoice;
+                        utterance.lang = selectedVoice.lang;
+                    }
+                    utterance.rate = speechRate;
+
+                    utterance.addEventListener('boundary', (event) => {
+                        if (event.name === 'word') {
+                            updateHighlight(chunkStartIndex + event.charIndex);
+                        }
+                    });
+
+                    utterance.addEventListener('end', () => {
+                        currentGlobalIndex += chunkText.length;
+                        chunkIndex++;
+                        speakNextChunk();
+                    });
+
+                    utterance.addEventListener('error', (e) => {
+                        console.error("Speech synthesis error:", e);
+                        chunkIndex++;
+                        speakNextChunk();
+                    });
+
+                    synth.speak(utterance);
+                }
 
                 synth.resume();
-                synth.speak(currentUtterance);
+                speakNextChunk();
                 statusText.textContent = "Playing...";
-            }, 100);
+            }, 50);
         }
 
         function startFromChosenWord() {
             if (!isEditing) playSpeech(selectedStartIndex);
         }
 
-        document.getElementById('startFromWordBtn').appendEventListener ? document.getElementById('startFromWordBtn').addEventListener('click', startFromChosenWord) : document.getElementById('startFromWordBtn').addEventListener('click', startFromChosenWord);
+        document.getElementById('startFromWordBtn').addEventListener('click', startFromChosenWord);
         document.getElementById('modalStartFromWordBtn').addEventListener('click', startFromChosenWord);
 
         function togglePlayPause() {
